@@ -1,0 +1,23 @@
+[project]
+name = "spatialNN"
+description="Library of space based neural networks"
+readme = "README.md"
+authors = [
+  { name = "Ewan Miller", email = "emiller@ifae.es" },
+]
+requires-python = ">=3.0"
+license = {file="LICENSE"}
+keywords = []
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Environment :: GPU",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Intended Audience :: Science/Research"
+]
+dependencies = [
+  "numpy",
+  "gym",
+  "torch"
+]
+dynamic = ["version"]
