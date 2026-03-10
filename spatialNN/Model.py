@@ -20,6 +20,7 @@ class Spatial_Model(Module):
             n_neurons: int,
             inputs: int,
             outputs: int,
+            activation: typing.Callable[[Tensor], Tensor] = torch.nn.Hardsigmoid(),
             input_positions: Tensor = None,
             output_positions: Tensor = None,
             distance_weight_scaling: float = 1.0,
@@ -27,22 +28,26 @@ class Spatial_Model(Module):
             distance_thresh_fn: typing.Callable[[Tensor], Tensor] = torch.nn.Hardsigmoid(),
             input_init_fn: typing.Callable[[typing.List[int]], Tensor] = torch.rand,
             output_init_fn: typing.Callable[[typing.List[int]], Tensor] = torch.rand,
-            init_fn: typing.Callable[[typing.List[int]], Tensor] = torch.rand
-        ):
-
+            init_fn: typing.Callable[[typing.List[int]], Tensor] = torch.rand,
+            recurrent_mode: bool = False
+        ) -> None:
+        
         super().__init__()
         
+        self._activation = activation
         self._n_neurons: int = n_neurons
         self._n_dimensions: int = n_dimensions
         self._distance_thresh_fn: typing.Callable[[Tensor], Tensor] = distance_thresh_fn
+        self._distance_thresh_fn.__init__()
         self._distance_weight_scaling: float = distance_weight_scaling
         self._distance_threshold: float = distance_threshold
+        self._recurrent_mode = recurrent_mode
 
         ## create a buffer to store the state of the hidden neuron
-        self._hidden_state = self.register_buffer("hidden_state", torch.zeros([n_neurons]))
+        self.register_buffer("hidden_state", torch.zeros([n_neurons]))
 
         ## initialise the hidden neuron positions based the initialiser function
-        self._positions: Tensor = self.register_parameter(name = "positions", param = Parameter(init_fn([n_neurons, n_dimensions])))
+        self.register_parameter(name = "positions", param = Parameter(init_fn([n_neurons, n_dimensions])))
         
         ## If user specified input and output positions, first check that they're valid then set 
         if input_positions != None:
@@ -60,7 +65,63 @@ class Spatial_Model(Module):
             self._output_positions: Tensor = output_init_fn(outputs, n_dimensions)
 
     def forward(self, input: Tensor) -> Tensor:
-        raise NotImplementedError()
+
+        if self._recurrent_mode:
+
+            retTensors = []
+
+            if input.ndim == 1:
+                raise ValueError("Too few dimensions for recurrent mode, should be 2 (time steps, features), or three (batch, time steps, features)")
+            
+            elif input.ndim == 2:
+                input_list = torch.tensor_split(input, input.shape[0], dim=0)
+                batch_size = 0
+                stack_dim = 0
+                
+            elif input.ndim == 3:
+                batch_size = input.shape[0]
+                if batch_size != 1:
+                    raise NotImplementedError("Sorry I can only do one dimension at the moment :(")
+                input_list = torch.tensor_split(input, input.shape[1], dim=1)
+                stack_dim = 0
+
+            for inp in input_list:
+                retTensors.append(self._single_forward(torch.squeeze(inp)))
+
+            ret = torch.stack(retTensors, stack_dim)
+            if batch_size > 0:
+                ret = torch.unsqueeze(ret, 0)
+
+            return ret
+
+        else:
+            ret = self._single_forward(input)
+            return ret
+        
+    def _single_forward(self, input: Tensor) -> Tensor:
+
+        input_weights = self._get_weights(self.get_parameter("positions"), self._input_positions)
+        hidden_weights = self._get_weights(self.get_parameter("positions"), self.get_parameter("positions"))
+        output_weights = self._get_weights(self._output_positions, self.get_parameter("positions"))
+
+        new_hidden = self.get_buffer("hidden_state") + torch.matmul(hidden_weights, self.get_buffer("hidden_state")) + torch.matmul(input_weights, input)
+        #print(new_hidden.shape)
+        self.hidden_state[...] = self._activation(new_hidden)
+        
+        """
+        print("input weights:", input_weights, "\nshape =", input_weights.shape)
+        print("hidden weights:", hidden_weights, "\nshape =", hidden_weights.shape)
+        print("output weights:", output_weights, "\nshape =", output_weights.shape)
+
+        print("BLAAAA")
+        print(self.get_buffer("hidden_state"))
+        print(torch.matmul(hidden_weights, self.get_buffer("hidden_state")))
+        
+        print("new hidden:", new_hidden)
+        print("new hidden shape:", new_hidden.shape)
+        """
+
+        return torch.matmul(output_weights, self.get_buffer("hidden_state"))
     
     def _get_weights(self, output: Tensor, input: Tensor) -> Tensor:
         '''
@@ -87,7 +148,7 @@ class Spatial_Model(Module):
         ## if alls well then return 
         return to_validate
     
-    def _draw_connections(self, plt_axis, positions1: Tensor, positions2: Tensor):
+    def _draw_connections(self, plt_axis, positions1: Tensor, positions2: Tensor) -> None:
         ''' 
         Draw the connections between two sets of neurons
         '''
@@ -107,7 +168,7 @@ class Spatial_Model(Module):
                 )
 
 
-    def _draw_pyplot(self, plt_axis):
+    def _draw_pyplot(self, plt_axis) -> None:
         '''
         render the layer to a pyplot axis object
         '''
